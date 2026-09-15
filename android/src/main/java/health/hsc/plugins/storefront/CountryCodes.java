@@ -1,4 +1,4 @@
-package de.healthstudyclub.plugins.storefront;
+package health.hsc.plugins.storefront;
 
 import androidx.annotation.Nullable;
 import java.util.IllformedLocaleException;

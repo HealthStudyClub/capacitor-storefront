@@ -1,4 +1,4 @@
-package de.healthstudyclub.plugins.storefront;
+package health.hsc.plugins.storefront;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.VisibleForTesting;
