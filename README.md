@@ -67,11 +67,20 @@ npm run test:android # instrumented tests on the connected Android emulator/devi
 
 ### iOS simulator tests
 
-`scripts/test-ios.sh` runs the Swift package's test suite with `xcodebuild test` on the newest available iPhone simulator (override with `IOS_SIMULATOR_NAME` or `IOS_SIMULATOR_ID`). The tests in `ios/Tests/StorefrontPluginTests` cover:
+`scripts/test-ios.sh` runs the Swift package's test suite with `xcodebuild test` on an iPhone simulator (override with `IOS_SIMULATOR_NAME` or `IOS_SIMULATOR_ID`). The tests in `ios/Tests/StorefrontPluginTests` cover:
 
 - the ISO 3166-1 alpha-3 to alpha-2 mapping,
 - the reader's mapping, `UNAVAILABLE` and `TIMEOUT` behaviour with an injected StoreKit stand-in,
-- the real StoreKit path on the simulator: a [StoreKit Testing](https://developer.apple.com/documentation/storekittest) session selects the storefront (`DEU`, `USA`, ...) and the plugin has to read it back through `Storefront.current`.
+- the real StoreKit path on the simulator: the plugin has to read back whatever `Storefront.current` reports, and a [StoreKit Testing](https://developer.apple.com/documentation/storekittest) session selects specific storefronts (`DEU`, `USA`, `GBR`, `CHE`) that the plugin has to read through `Storefront.current`.
+
+#### Known Apple bug: StoreKit Testing on iOS 26.3+ simulators
+
+Since the iOS 26.3 simulator runtime, `SKTestSession` cannot apply its StoreKit configuration when tests are started with `xcodebuild` instead of the Xcode IDE. Every call logs `Error Domain=SKInternalErrorDomain Code=3` and the simulator keeps its default storefront (`USA`), so tests that select another storefront fail. Apple tracks this as FB22237318; the iOS 26.5 release notes list it as fixed, but the error persists on iOS 26.5.1 with Xcode 26.6 and Apple's DTS states there is no workaround ([forum thread](https://developer.apple.com/forums/thread/826971)). iOS 26.2 and older runtimes are not affected.
+
+The plugin handles it in two places:
+
+1. `scripts/test-ios.sh` picks the newest iPhone simulator whose runtime is at most `IOS_MAX_RUNTIME` (default `26.2`) and only falls back to newer runtimes when no such simulator exists. GitHub's macOS runners ship iOS 26.2 next to the current runtime, so CI runs the full suite. Set `IOS_MAX_RUNTIME=99` to force the newest runtime.
+2. The storefront-switching tests wait up to 5 s for the override to take effect and otherwise skip with a message naming the bug, instead of failing. `testReadsTheStorefrontTheSimulatorReports` does not depend on the override and always verifies the real StoreKit read path.
 
 ### Android emulator tests
 
