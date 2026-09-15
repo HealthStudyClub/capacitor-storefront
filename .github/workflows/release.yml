@@ -1,0 +1,71 @@
+name: Release to npm
+
+# Publishes @healthstudyclub/capacitor-storefront to npmjs.org with npm
+# Trusted Publishing (OIDC): no npm token is stored in GitHub. On npmjs.com the
+# package needs a trusted publisher for GitHub Actions with
+#   organization/user: HealthStudyClub
+#   repository:        capacitor-storefront
+#   workflow filename: release.yml
+# Provenance attestations are generated automatically.
+#
+# Fallback: if a repository secret NPM_TOKEN exists (e.g. for the very first
+# publish before a trusted publisher can be configured), it is used instead.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Run npm publish with --dry-run (nothing is uploaded)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: Publish to npmjs
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC token for npm trusted publishing and provenance
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Update npm (trusted publishing needs npm 11.5.1 or newer)
+        run: |
+          npm install -g npm@latest
+          node --version
+          npm --version
+      - run: npm ci
+      - name: Check that the release tag matches package.json
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION="v$(node -p "require('./package.json').version")"
+          if [ "$VERSION" != "$TAG" ]; then
+            echo "::error::package.json version $VERSION does not match release tag $TAG"
+            exit 1
+          fi
+      - name: Publish
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run == true && '--dry-run' || '' }}
+        run: |
+          if [ -n "$NPM_TOKEN" ]; then
+            echo "Using NPM_TOKEN secret instead of trusted publishing"
+            export NODE_AUTH_TOKEN="$NPM_TOKEN"
+          fi
+          npm publish $DRY_RUN

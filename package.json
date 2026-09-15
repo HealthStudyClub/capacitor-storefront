@@ -1,0 +1,89 @@
+{
+  "name": "@healthstudyclub/capacitor-storefront",
+  "version": "0.1.0",
+  "description": "Capacitor plugin that reads the current App Store storefront (StoreKit Storefront.current) and its Google Play counterpart (Play Billing getBillingConfig)",
+  "main": "dist/plugin.cjs.js",
+  "module": "dist/esm/index.js",
+  "types": "dist/esm/index.d.ts",
+  "unpkg": "dist/plugin.js",
+  "files": [
+    "android/src/main/",
+    "android/build.gradle",
+    "dist/",
+    "ios/Sources",
+    "ios/Tests",
+    "Package.swift",
+    "HealthstudyclubCapacitorStorefront.podspec"
+  ],
+  "author": "Health Study Club GmbH",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HealthStudyClub/capacitor-storefront.git"
+  },
+  "bugs": {
+    "url": "https://github.com/HealthStudyClub/capacitor-storefront/issues"
+  },
+  "homepage": "https://github.com/HealthStudyClub/capacitor-storefront#readme",
+  "keywords": [
+    "capacitor",
+    "plugin",
+    "native",
+    "storefront",
+    "storekit",
+    "app-store",
+    "google-play",
+    "play-billing",
+    "country"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "verify": "npm run verify:ios && npm run verify:android && npm run verify:web",
+    "verify:ios": "xcodebuild -scheme HealthstudyclubCapacitorStorefront -destination generic/platform=iOS",
+    "verify:android": "cd android && ./gradlew clean build test && cd ..",
+    "verify:web": "npm run build",
+    "test": "npm run test:ios && npm run test:android",
+    "test:ios": "./scripts/test-ios.sh",
+    "test:android": "./scripts/test-android.sh",
+    "lint": "npm run eslint && npm run prettier -- --check && npm run swiftlint -- lint",
+    "fmt": "npm run eslint -- --fix && npm run prettier -- --write && npm run swiftlint -- --fix --format",
+    "eslint": "eslint",
+    "prettier": "prettier \"**/*.{css,html,ts,js,java}\" --plugin=prettier-plugin-java",
+    "swiftlint": "node-swiftlint",
+    "docgen": "docgen --api StorefrontPlugin --output-readme README.md --output-json dist/docs.json",
+    "build": "npm run clean && npm run docgen && tsc && rollup -c rollup.config.mjs",
+    "clean": "rimraf ./dist",
+    "watch": "tsc --watch",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^8.0.0",
+    "@capacitor/core": "^8.0.0",
+    "@capacitor/docgen": "^0.3.1",
+    "@capacitor/ios": "^8.0.0",
+    "@ionic/eslint-config": "^0.5.0",
+    "@ionic/prettier-config": "^4.0.0",
+    "@ionic/swiftlint-config": "^2.0.0",
+    "eslint": "^10.10.0",
+    "prettier": "^3.6.2",
+    "prettier-plugin-java": "^2.7.7",
+    "rimraf": "^6.1.0",
+    "rollup": "^4.53.2",
+    "swiftlint": "^2.0.0",
+    "typescript": "^5.9.3"
+  },
+  "peerDependencies": {
+    "@capacitor/core": ">=8.0.0"
+  },
+  "prettier": "@ionic/prettier-config",
+  "capacitor": {
+    "ios": {
+      "src": "ios"
+    },
+    "android": {
+      "src": "android"
+    }
+  }
+}
