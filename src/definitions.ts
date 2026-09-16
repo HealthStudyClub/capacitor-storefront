@@ -16,7 +16,8 @@ export type StorefrontSource = 'appStore' | 'playBilling';
  *   or answered with an error. On Android the error carries a `data` object
  *   with the Play Billing `responseCode` and `debugMessage`.
  * - `TIMEOUT`: the store did not answer within the requested timeout.
- * - `UNIMPLEMENTED`: the plugin is not available on this platform (web).
+ * - `UNIMPLEMENTED`: the plugin is not available on this platform (Android,
+ *   web).
  */
 export type StorefrontErrorCode = 'UNAVAILABLE' | 'TIMEOUT' | 'UNIMPLEMENTED';
 
@@ -78,8 +79,7 @@ export interface StorefrontPlugin {
    * assigned to.
    *
    * - iOS: `StoreKit.Storefront.current` (StoreKit 2).
-   * - Android: `BillingClient.getBillingConfigAsync` (Play Billing Library),
-   *   which requires the Google Play Store and a signed in Google account.
+   * - Android: not available yet, rejects with code `UNIMPLEMENTED`.
    * - Web: not available, rejects with code `UNIMPLEMENTED`.
    *
    * @throws Rejects with a `code` of type {@link StorefrontErrorCode}.

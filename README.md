@@ -5,7 +5,7 @@ Capacitor plugin that reads the storefront (store country) the device's app stor
 | Platform | Source                                                                 | Requirements                                              |
 | -------- | ---------------------------------------------------------------------- | --------------------------------------------------------- |
 | iOS      | StoreKit 2 [`Storefront.current`](https://developer.apple.com/documentation/storekit/storefront/current) | iOS 15+ (Capacitor 8)                                     |
-| Android  | Play Billing [`BillingClient.getBillingConfigAsync`](https://developer.android.com/reference/com/android/billingclient/api/BillingClient#getBillingConfigAsync(com.android.billingclient.api.GetBillingConfigParams,%20com.android.billingclient.api.BillingConfigResponseListener)) | Google Play Store and a signed in Google account on the device |
+| Android  | not available yet, rejects with `UNIMPLEMENTED`                        | see [Android](#android)                                   |
 | Web      | not available, rejects with `UNIMPLEMENTED`                            |                                                           |
 
 ## Install
@@ -26,24 +26,24 @@ try {
   const storefront = await Storefront.getStorefront();
   console.log(storefront.countryCode); // "DE"
   console.log(storefront.countryCode3); // "DEU"
-  console.log(storefront.id); // "143443" on iOS, undefined on Android
-  console.log(storefront.source); // "appStore" | "playBilling"
+  console.log(storefront.id); // "143443"
+  console.log(storefront.source); // "appStore"
 } catch (error) {
   switch ((error as { code?: string }).code) {
     case 'UNAVAILABLE':
-      // no store account / no Google Play on the device
+      // no App Store account on the device
       break;
     case 'TIMEOUT':
       // the store did not answer within `timeout` ms
       break;
     case 'UNIMPLEMENTED':
-      // running on the web
+      // running on Android or the web
       break;
   }
 }
 ```
 
-The country code is normalised to ISO 3166-1 alpha-2 on both platforms. iOS additionally reports the App Store storefront id, Android additionally reports the Play Billing `responseCode` and `debugMessage` in `error.data` when the lookup fails.
+The country code is normalised to ISO 3166-1 alpha-2, and the App Store storefront id is reported alongside it.
 
 ## Platform notes
 
@@ -53,7 +53,9 @@ The country code is normalised to ISO 3166-1 alpha-2 on both platforms. iOS addi
 
 ### Android
 
-Google Play reports the storefront through the Play Billing Library (version 9.1.0 by default, override with `playBillingVersion` in your app's `variables.gradle`). The plugin opens a billing connection for each call and closes it again once the answer arrived, so it does not interfere with other billing libraries in the app. Google Play needs the Play Store app and a signed in Google account, otherwise the call rejects with `UNAVAILABLE`.
+Android is not supported for now. Google Play only reports the storefront through the Play Billing Library, and that library adds the `com.android.vending.BILLING` permission to every app that includes it. To keep apps free of that permission, the package does not ship or register its Android implementation: `npx cap sync android` skips the plugin and `getStorefront()` rejects with `UNIMPLEMENTED` on Android.
+
+The Play Billing implementation (`BillingClient.getBillingConfigAsync`) and its emulator tests stay in `android/` so Android support can be switched back on by restoring `capacitor.android` and the `android/` entries of `files` in `package.json`.
 
 ## Development
 
@@ -135,8 +137,7 @@ Read the storefront (store country) the device's app store account is
 assigned to.
 
 - iOS: `StoreKit.Storefront.current` (StoreKit 2).
-- Android: `BillingClient.getBillingConfigAsync` (Play Billing Library),
-  which requires the Google Play Store and a signed in Google account.
+- Android: not available yet, rejects with code `UNIMPLEMENTED`.
 - Web: not available, rejects with code `UNIMPLEMENTED`.
 
 | Param         | Type                                                                  |

@@ -1,14 +1,12 @@
 {
   "name": "@healthstudyclub/capacitor-storefront",
-  "version": "0.1.0",
-  "description": "Capacitor plugin that reads the current App Store storefront (StoreKit Storefront.current) and its Google Play counterpart (Play Billing getBillingConfig)",
+  "version": "0.2.0",
+  "description": "Capacitor plugin that reads the current App Store storefront (StoreKit Storefront.current)",
   "main": "dist/plugin.cjs.js",
   "module": "dist/esm/index.js",
   "types": "dist/esm/index.d.ts",
   "unpkg": "dist/plugin.js",
   "files": [
-    "android/src/main/",
-    "android/build.gradle",
     "dist/",
     "ios/Sources",
     "ios/Tests",
@@ -32,8 +30,6 @@
     "storefront",
     "storekit",
     "app-store",
-    "google-play",
-    "play-billing",
     "country"
   ],
   "publishConfig": {
@@ -81,9 +77,6 @@
   "capacitor": {
     "ios": {
       "src": "ios"
-    },
-    "android": {
-      "src": "android"
     }
   }
 }
