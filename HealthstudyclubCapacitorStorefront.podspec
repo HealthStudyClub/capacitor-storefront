@@ -14,5 +14,6 @@ Pod::Spec.new do |s|
   s.ios.deployment_target = '15.0'
   s.dependency 'Capacitor'
   s.frameworks = 'StoreKit'
+  s.weak_frameworks = 'MarketplaceKit'
   s.swift_version = '5.1'
 end

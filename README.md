@@ -4,7 +4,7 @@ Capacitor plugin that reads the storefront (store country) the device's app stor
 
 | Platform | Source                                                                 | Requirements                                              |
 | -------- | ---------------------------------------------------------------------- | --------------------------------------------------------- |
-| iOS      | StoreKit 2 [`Storefront.current`](https://developer.apple.com/documentation/storekit/storefront/current) | iOS 15+ (Capacitor 8)                                     |
+| iOS      | StoreKit 2 [`Storefront.current`](https://developer.apple.com/documentation/storekit/storefront/current), MarketplaceKit [`AppDistributor.current`](https://developer.apple.com/documentation/marketplacekit/appdistributor) for the `source` | iOS 15+ (Capacitor 8), `source` other than `appStore` needs iOS 17.4+ |
 | Android  | Play Billing [`BillingClient.getBillingConfigAsync`](https://developer.android.com/reference/com/android/billingclient/api/BillingClient#getBillingConfigAsync(com.android.billingclient.api.GetBillingConfigParams,%20com.android.billingclient.api.BillingConfigResponseListener)) | Google Play Store and a signed in Google account on the device |
 | Web      | not available, rejects with `UNIMPLEMENTED`                            |                                                           |
 
@@ -27,7 +27,8 @@ try {
   console.log(storefront.countryCode); // "DE"
   console.log(storefront.countryCode3); // "DEU"
   console.log(storefront.id); // "143443" on iOS, undefined on Android
-  console.log(storefront.source); // "appStore" | "playBilling"
+  console.log(storefront.source); // "appStore" | "testFlight" | "marketplace" | "web" | "other" | "playBilling"
+  console.log(storefront.installer); // "com.android.vending" on Android, the marketplace's bundle id on iOS, else undefined
 } catch (error) {
   switch ((error as { code?: string }).code) {
     case 'UNAVAILABLE':
@@ -43,7 +44,7 @@ try {
 }
 ```
 
-The country code is normalised to ISO 3166-1 alpha-2 on both platforms. iOS additionally reports the App Store storefront id, Android additionally reports the Play Billing `responseCode` and `debugMessage` in `error.data` when the lookup fails.
+The country code is normalised to ISO 3166-1 alpha-2 on both platforms. `source` tells which store or channel the app was distributed through, `installer` identifies the installing app when the platform knows it (see the platform notes). iOS additionally reports the App Store storefront id. When the lookup fails, `error.data` carries `source` and `installer` on iOS, and `installer` together with the Play Billing `responseCode` and `debugMessage` on Android.
 
 ## Platform notes
 
@@ -51,9 +52,13 @@ The country code is normalised to ISO 3166-1 alpha-2 on both platforms. iOS addi
 
 `Storefront.current` is read through StoreKit 2. It reflects the App Store account signed in on the device, or, when the app runs with a StoreKit configuration file, the storefront selected in Xcode. It does not need any capability or entitlement.
 
+`source` comes from MarketplaceKit's [`AppDistributor.current`](https://developer.apple.com/documentation/marketplacekit/appdistributor) on iOS 17.4 and newer: `appStore`, `testFlight`, `marketplace` (with the marketplace's bundle identifier in `installer`), `web` (iOS 17.5 and newer) or `other` for builds iOS cannot attribute (development, ad hoc, enterprise) and when MarketplaceKit fails to answer. Before iOS 17.4 alternative distribution does not exist, so the plugin reports `appStore` there. MarketplaceKit is weak-linked and the plugin keeps working on iOS 15 and 16. The distribution lookup shares the call's `timeout`: when MarketplaceKit has not answered by then, the storefront is still returned with `source` set to `other`. That is what happens in hostless XCTest bundles on the simulator, where `AppDistributor.current` never answers. Apps distributed outside the App Store may get no storefront at all; the `UNAVAILABLE` error then still carries `source` and `installer` in `error.data`.
+
 ### Android
 
 Google Play reports the storefront through the Play Billing Library (version 9.1.0 by default, override with `playBillingVersion` in your app's `variables.gradle`). The plugin opens a billing connection for each call and closes it again once the answer arrived, so it does not interfere with other billing libraries in the app. Google Play needs the Play Store app and a signed in Google account, otherwise the call rejects with `UNAVAILABLE`.
+
+Google Play answers whenever the Play Store and a Google account are on the device, regardless of where the app itself was installed from, so `source` is always `playBilling` on Android. To tell installs apart, every result and every `error.data` object carries `installer`, the package that installed the app as recorded by Android: `com.android.vending` for Google Play, `com.amazon.venezia` for the Amazon Appstore, `com.sec.android.app.samsungapps` for the Galaxy Store, and so on. It is read through `PackageManager.getInstallSourceInfo` on Android 11 and newer and `PackageManager.getInstallerPackageName` before that, and omitted when Android did not record an installer, e.g. for `adb` installs or APKs installed from a file.
 
 ## Development
 
@@ -70,7 +75,8 @@ npm run test:android # instrumented tests on the connected Android emulator/devi
 `scripts/test-ios.sh` runs the Swift package's test suite with `xcodebuild test` on an iPhone simulator (override with `IOS_SIMULATOR_NAME` or `IOS_SIMULATOR_ID`). The tests in `ios/Tests/StorefrontPluginTests` cover:
 
 - the ISO 3166-1 alpha-3 to alpha-2 mapping,
-- the reader's mapping, `UNAVAILABLE` and `TIMEOUT` behaviour with an injected StoreKit stand-in,
+- the mapping of MarketplaceKit's `AppDistributor` to `source` and `installer`, and that the real MarketplaceKit path settles within the timeout with a documented source,
+- the reader's mapping, `UNAVAILABLE` and `TIMEOUT` behaviour with injected StoreKit and MarketplaceKit stand-ins, including stand-ins that never answer,
 - the real StoreKit path on the simulator: the plugin has to read back whatever `Storefront.current` reports, and a [StoreKit Testing](https://developer.apple.com/documentation/storekittest) session selects specific storefronts (`DEU`, `USA`, `GBR`, `CHE`) that the plugin has to read through `Storefront.current`.
 
 #### Known Apple bug: StoreKit Testing on iOS 26.3+ simulators
@@ -86,7 +92,7 @@ The plugin handles it in two places:
 
 `scripts/test-android.sh` runs `./gradlew connectedDebugAndroidTest` against whatever `adb` sees. The tests in `android/src/androidTest` cover:
 
-- the alpha-2 to alpha-3 mapping and the JSON payloads,
+- the alpha-2 to alpha-3 mapping, the installer package lookup and the JSON payloads,
 - the plugin's bridge layer with a fake provider (resolve, reject, timeout option),
 - the real Play Billing path. Emulators without Google Play cannot report a storefront, so this test asserts the contract that holds everywhere: the lookup settles exactly once, within the timeout, with either a well formed storefront or a well formed `UNAVAILABLE`/`TIMEOUT` error.
 
@@ -134,9 +140,11 @@ getStorefront(options?: GetStorefrontOptions | undefined) => Promise<StorefrontI
 Read the storefront (store country) the device's app store account is
 assigned to.
 
-- iOS: `StoreKit.Storefront.current` (StoreKit 2).
+- iOS: `StoreKit.Storefront.current` (StoreKit 2), plus MarketplaceKit's
+  `AppDistributor.current` for the `source` (iOS 17.4 and newer).
 - Android: `BillingClient.getBillingConfigAsync` (Play Billing Library),
-  which requires the Google Play Store and a signed in Google account.
+  which requires the Google Play Store and a signed in Google account,
+  plus the installer package from `PackageManager`.
 - Web: not available, rejects with code `UNIMPLEMENTED`.
 
 | Param         | Type                                                                  |
@@ -155,19 +163,20 @@ assigned to.
 
 #### StorefrontInfo
 
-| Prop               | Type                                                          | Description                                                                                                                                                                                                                                                                             | Since |
-| ------------------ | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
-| **`countryCode`**  | <code>string</code>                                           | ISO 3166-1 alpha-2 country code of the storefront, upper case (e.g. `"DE"`). On iOS this is derived from the alpha-3 code that StoreKit reports. Should StoreKit ever report a code the plugin does not know, the raw alpha-3 value is returned here unchanged.                         | 0.1.0 |
-| **`countryCode3`** | <code>string</code>                                           | ISO 3166-1 alpha-3 country code of the storefront, upper case (e.g. `"DEU"`). On iOS this is the raw value of `Storefront.current.countryCode`. On Android it is derived from the alpha-2 code Google Play reports and is omitted when the device's locale data does not know the code. | 0.1.0 |
-| **`id`**           | <code>string</code>                                           | Platform specific storefront identifier. - iOS: the App Store storefront id (`Storefront.current.id`, e.g. `"143443"` for Germany). - Android: not available.                                                                                                                           | 0.1.0 |
-| **`source`**       | <code><a href="#storefrontsource">StorefrontSource</a></code> | The store that answered.                                                                                                                                                                                                                                                                | 0.1.0 |
+| Prop               | Type                                                          | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Since |
+| ------------------ | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
+| **`countryCode`**  | <code>string</code>                                           | ISO 3166-1 alpha-2 country code of the storefront, upper case (e.g. `"DE"`). On iOS this is derived from the alpha-3 code that StoreKit reports. Should StoreKit ever report a code the plugin does not know, the raw alpha-3 value is returned here unchanged.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | 0.1.0 |
+| **`countryCode3`** | <code>string</code>                                           | ISO 3166-1 alpha-3 country code of the storefront, upper case (e.g. `"DEU"`). On iOS this is the raw value of `Storefront.current.countryCode`. On Android it is derived from the alpha-2 code Google Play reports and is omitted when the device's locale data does not know the code.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | 0.1.0 |
+| **`id`**           | <code>string</code>                                           | Platform specific storefront identifier. - iOS: the App Store storefront id (`Storefront.current.id`, e.g. `"143443"` for Germany). - Android: not available.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | 0.1.0 |
+| **`source`**       | <code><a href="#storefrontsource">StorefrontSource</a></code> | The store or channel the app was distributed through, see {@link <a href="#storefrontsource">StorefrontSource</a>}. Version 0.1.0 only reported `appStore` and `playBilling`; since 0.2.0 iOS distinguishes App Store, TestFlight, alternative marketplace and web distribution.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | 0.2.0 |
+| **`installer`**    | <code>string</code>                                           | Identifier of the app that installed this app. - iOS: the bundle identifier of the alternative app marketplace when `source` is `marketplace`; not available for other sources. - Android: the installer package name recorded by the package manager (e.g. `"com.android.vending"` for Google Play, `"com.amazon.venezia"` for the Amazon Appstore), read through `PackageManager.getInstallSourceInfo` (Android 11 and newer) or `PackageManager.getInstallerPackageName` (older versions). Google Play Billing reports the storefront of the Google account on the device even when the app was not installed from Google Play, so this field tells such installs apart. Omitted when the platform did not record an installer, e.g. for installs through `adb` or from an APK file. The same value is reported in `error.data` when the lookup fails. | 0.2.0 |
 
 
 #### GetStorefrontOptions
 
-| Prop          | Type                | Description                                                                                         | Default            | Since |
-| ------------- | ------------------- | --------------------------------------------------------------------------------------------------- | ------------------ | ----- |
-| **`timeout`** | <code>number</code> | Maximum time in milliseconds to wait for the store before the call is rejected with code `TIMEOUT`. | <code>10000</code> | 0.1.0 |
+| Prop          | Type                | Description                                                                                                                                                                                                                                                                                        | Default            | Since |
+| ------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ | ----- |
+| **`timeout`** | <code>number</code> | Maximum time in milliseconds to wait for the store before the call is rejected with code `TIMEOUT`. On iOS the distribution lookup behind `source` shares this budget: when MarketplaceKit has not answered by the time it expires, the storefront is still returned with `source` set to `other`. | <code>10000</code> | 0.1.0 |
 
 
 ### Type Aliases
@@ -175,12 +184,28 @@ assigned to.
 
 #### StorefrontSource
 
-The store that answered the storefront request.
+The store or channel the app was distributed through.
 
-- `appStore`: Apple App Store, read through StoreKit (`Storefront.current`).
+On iOS this comes from MarketplaceKit's `AppDistributor.current` (iOS 17.4
+and newer). Before iOS 17.4 no other channel than the App Store exists, so
+`appStore` is reported (TestFlight builds included). On Android the
+storefront is always read through Google Play Billing, so `playBilling` is
+reported regardless of where the app was installed from; use
+{@link <a href="#storefrontinfo">StorefrontInfo.installer</a>} to tell installs apart there.
+
+- `appStore`: Apple App Store.
+- `testFlight`: TestFlight (iOS 17.4 and newer).
+- `marketplace`: an alternative app marketplace (EU, iOS 17.4 and newer).
+  `installer` holds the marketplace's bundle identifier.
+- `web`: web distribution (EU, iOS 17.5 and newer).
+- `other`: iOS could not attribute the installation, e.g. development, ad hoc
+  and enterprise builds, or MarketplaceKit failed to answer within the
+  timeout.
 - `playBilling`: Google Play, read through the Play Billing Library
   (`BillingClient.getBillingConfigAsync`).
 
-<code>'appStore' | 'playBilling'</code>
+`testFlight`, `marketplace`, `web` and `other` are reported since 0.2.0.
+
+<code>'appStore' | 'testFlight' | 'marketplace' | 'web' | 'other' | 'playBilling'</code>
 
 </docgen-api>

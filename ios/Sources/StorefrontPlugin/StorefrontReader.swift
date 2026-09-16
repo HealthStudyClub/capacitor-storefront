@@ -1,4 +1,5 @@
 import Foundation
+import os
 import StoreKit
 
 /// The values StoreKit reports for the current storefront.
@@ -16,48 +17,53 @@ public struct RawStorefront: Equatable, Sendable {
 
 /// The storefront as it is handed to JavaScript.
 public struct StorefrontInfo: Equatable, Sendable {
-    public static let source = "appStore"
-
     /// ISO 3166-1 alpha-2 country code, upper case.
     public let countryCode: String
     /// ISO 3166-1 alpha-3 country code, upper case.
     public let countryCode3: String
     /// App Store storefront identifier.
     public let id: String
+    /// The channel the app was distributed through.
+    public let distribution: AppDistribution
 
-    public init(countryCode: String, countryCode3: String, id: String) {
+    public init(countryCode: String, countryCode3: String, id: String, distribution: AppDistribution = .appStore) {
         self.countryCode = countryCode
         self.countryCode3 = countryCode3
         self.id = id
+        self.distribution = distribution
     }
 
     /// Builds the info from the raw StoreKit values. Unknown alpha-3 codes are
     /// passed through as `countryCode` so the caller still gets a value.
-    public init(raw: RawStorefront) {
+    public init(raw: RawStorefront, distribution: AppDistribution) {
         let alpha3 = raw.countryCode.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         self.init(
             countryCode: CountryCodes.alpha2(fromAlpha3: alpha3) ?? alpha3,
             countryCode3: alpha3,
-            id: raw.id
+            id: raw.id,
+            distribution: distribution
         )
     }
 
     /// The JSON payload resolved to the plugin call.
     public var dictionary: [String: Any] {
-        [
+        var dictionary: [String: Any] = [
             "countryCode": countryCode,
             "countryCode3": countryCode3,
-            "id": id,
-            "source": Self.source
+            "id": id
         ]
+        dictionary.merge(distribution.dictionary) { _, new in new }
+        return dictionary
     }
 }
 
 /// Errors a storefront lookup can fail with. `code` is what JavaScript sees
-/// as `error.code`.
+/// as `error.code`, `data` as `error.data`.
 public enum StorefrontError: Error, Equatable {
     /// StoreKit did not report a storefront (`Storefront.current` was `nil`).
-    case unavailable
+    /// The distribution is still reported so the caller can tell where the
+    /// app came from.
+    case unavailable(distribution: AppDistribution?)
     /// StoreKit did not answer within the timeout (milliseconds).
     case timeout(milliseconds: Double)
 
@@ -76,35 +82,75 @@ public enum StorefrontError: Error, Equatable {
             return "StoreKit did not report a storefront within \(Int(milliseconds)) ms."
         }
     }
+
+    /// Extra data for the rejected call, or `nil` when there is none.
+    public var data: [String: Any]? {
+        switch self {
+        case .unavailable(let distribution): return distribution?.dictionary
+        case .timeout: return nil
+        }
+    }
 }
 
-/// Reads the current App Store storefront.
+/// Reads the current App Store storefront and the app's distribution channel.
 ///
-/// The StoreKit access is injectable so the mapping and timeout logic can be
-/// tested without StoreKit, while `fetchFromStoreKit` is what the plugin uses
-/// at runtime and what the simulator tests exercise through `SKTestSession`.
+/// Both lookups are injectable so the mapping and timeout logic can be tested
+/// without StoreKit and MarketplaceKit, while the defaults are what the plugin
+/// uses at runtime and what the simulator tests exercise.
 public final class StorefrontReader: Sendable {
     public typealias Fetch = @Sendable () async -> RawStorefront?
+    public typealias FetchDistribution = @Sendable () async -> AppDistribution
 
     /// Default timeout in milliseconds.
     public static let defaultTimeout: Double = 10_000
 
-    private let fetch: Fetch
+    private static let logger = Logger(subsystem: "health.hsc.storefront", category: "Storefront")
 
-    public init(fetch: @escaping Fetch = StorefrontReader.fetchFromStoreKit) {
+    private let fetch: Fetch
+    private let fetchDistribution: FetchDistribution
+
+    public init(
+        fetch: @escaping Fetch = StorefrontReader.fetchFromStoreKit,
+        fetchDistribution: @escaping FetchDistribution = AppDistribution.fetchFromMarketplaceKit
+    ) {
         self.fetch = fetch
+        self.fetchDistribution = fetchDistribution
     }
 
-    /// Reads the storefront, failing with `StorefrontError.unavailable` when
-    /// StoreKit reports none and with `StorefrontError.timeout` when it does
-    /// not answer within `timeout` milliseconds.
+    /// Reads the storefront and the distribution concurrently.
+    ///
+    /// Fails with `StorefrontError.timeout` when StoreKit does not answer within
+    /// `timeout` milliseconds and with `StorefrontError.unavailable` when it
+    /// reports no storefront. The distribution lookup shares the same budget:
+    /// when MarketplaceKit has not answered by the time the storefront is known
+    /// and the timeout expires, the distribution is reported as `other` and the
+    /// storefront is still returned.
     public func read(timeout: Double = StorefrontReader.defaultTimeout) async throws -> StorefrontInfo {
         let fetch = self.fetch
-        let raw = try await Self.withTimeout(milliseconds: timeout) { await fetch() }
-        guard let raw = raw else {
-            throw StorefrontError.unavailable
+        let fetchDistribution = self.fetchDistribution
+        let started = DispatchTime.now()
+        let distributionLookup = Task { await fetchDistribution() }
+
+        guard case .finished(let raw) = await Self.timed(milliseconds: timeout, { await fetch() }) else {
+            distributionLookup.cancel()
+            throw StorefrontError.timeout(milliseconds: timeout)
         }
-        return StorefrontInfo(raw: raw)
+
+        let elapsed = Double(DispatchTime.now().uptimeNanoseconds - started.uptimeNanoseconds) / 1_000_000
+        let distribution: AppDistribution
+        switch await Self.timed(milliseconds: max(0, timeout - elapsed), { await distributionLookup.value }) {
+        case .finished(let value):
+            distribution = value
+        case .timedOut:
+            distributionLookup.cancel()
+            Self.logger.error("The app distributor was not reported within \(Int(timeout)) ms, reporting source 'other'.")
+            distribution = .other
+        }
+
+        guard let raw = raw else {
+            throw StorefrontError.unavailable(distribution: distribution)
+        }
+        return StorefrontInfo(raw: raw, distribution: distribution)
     }
 
     /// `StoreKit.Storefront.current`, reduced to the values the plugin needs.
@@ -116,24 +162,57 @@ public final class StorefrontReader: Sendable {
         return RawStorefront(countryCode: storefront.countryCode, id: storefront.id)
     }
 
-    private static func withTimeout<T: Sendable>(
+    /// Outcome of racing an operation against a timer.
+    enum Timed<T: Sendable>: Sendable {
+        case finished(T)
+        case timedOut
+    }
+
+    /// Races `operation` against a timer of `milliseconds`.
+    ///
+    /// Deliberately not a task group: a group waits for its children to react
+    /// to cancellation, and neither StoreKit nor MarketplaceKit promise that
+    /// (MarketplaceKit never returns in hostless test bundles on the
+    /// simulator). Here the timer wins regardless and the operation is left
+    /// running, so the caller's promise always settles.
+    static func timed<T: Sendable>(
         milliseconds: Double,
         _ operation: @escaping @Sendable () async -> T
-    ) async throws -> T {
-        try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask {
-                await operation()
-            }
-            group.addTask {
+    ) async -> Timed<T> {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Timed<T>, Never>) in
+            let once = ResumeOnce(continuation)
+            let work = Task { await operation() }
+            let timer = Task {
                 let nanoseconds = UInt64(max(0, milliseconds) * 1_000_000)
-                try await Task.sleep(nanoseconds: nanoseconds)
-                throw StorefrontError.timeout(milliseconds: milliseconds)
+                try? await Task.sleep(nanoseconds: nanoseconds)
+                if !Task.isCancelled {
+                    work.cancel()
+                    once.resume(.timedOut)
+                }
             }
-            guard let first = try await group.next() else {
-                throw StorefrontError.unavailable
+            Task {
+                let value = await work.value
+                once.resume(.finished(value))
+                timer.cancel()
             }
-            group.cancelAll()
-            return first
+        }
+    }
+
+    /// Resumes a continuation exactly once, whichever racer gets there first.
+    private final class ResumeOnce<T: Sendable>: @unchecked Sendable {
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<T, Never>?
+
+        init(_ continuation: CheckedContinuation<T, Never>) {
+            self.continuation = continuation
+        }
+
+        func resume(_ value: T) {
+            lock.lock()
+            let continuation = self.continuation
+            self.continuation = nil
+            lock.unlock()
+            continuation?.resume(returning: value)
         }
     }
 }

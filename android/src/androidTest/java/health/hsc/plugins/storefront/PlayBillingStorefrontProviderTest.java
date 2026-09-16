@@ -67,12 +67,15 @@ public class PlayBillingStorefrontProviderTest {
         assertTrue("lookup did not settle within 20 s", outcome.settled.await(20, TimeUnit.SECONDS));
         StorefrontInfo info = outcome.info.get();
         StorefrontException error = outcome.error.get();
+        String installer = InstallSource.installer(context());
         if (info != null) {
             Log.i(TAG, "Google Play reported storefront " + info);
             assertNull(error);
             assertTrue("countryCode must be ISO 3166-1 alpha-2: " + info.getCountryCode(), info.getCountryCode().matches("[A-Z]{2}"));
             assertNotNull("countryCode3 must be derivable for a real storefront", info.getCountryCode3());
             assertTrue(info.getCountryCode3().matches("[A-Z]{3}"));
+            assertEquals("result must carry the app's installer package", installer, info.getInstaller());
+            assertEquals(installer, info.toJSObject().getString("installer"));
         } else {
             assertNotNull("neither storefront nor error reported", error);
             Log.i(TAG, "Google Play Billing unavailable on this device: " + error.getMessage());
@@ -81,6 +84,10 @@ public class PlayBillingStorefrontProviderTest {
                 Arrays.asList(StorefrontException.CODE_UNAVAILABLE, StorefrontException.CODE_TIMEOUT).contains(error.getCode())
             );
             assertNotNull(error.getMessage());
+            assertEquals("error must carry the app's installer package", installer, error.getInstaller());
+            if (installer != null) {
+                assertEquals(installer, error.toData().getString("installer"));
+            }
         }
         Thread.sleep(500);
         assertEquals("the lookup must settle exactly once", 1, outcome.callbacks.get());

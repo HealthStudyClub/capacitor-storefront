@@ -16,34 +16,48 @@ public final class StorefrontException extends Exception {
     private final String code;
     private final Integer responseCode;
     private final String debugMessage;
+    private final String installer;
 
+    /**
+     * @param responseCode Play Billing response code, if the failure came from Play Billing.
+     * @param debugMessage Play Billing debug message, if any.
+     * @param installer package that installed the app, or {@code null} when Android did not record one.
+     */
     public StorefrontException(
         @NonNull String code,
         @NonNull String message,
         @Nullable Integer responseCode,
-        @Nullable String debugMessage
+        @Nullable String debugMessage,
+        @Nullable String installer
     ) {
         super(message);
         this.code = code;
         this.responseCode = responseCode;
         this.debugMessage = debugMessage;
+        this.installer = installer;
     }
 
     @NonNull
-    public static StorefrontException unavailable(@NonNull String message) {
-        return new StorefrontException(CODE_UNAVAILABLE, message, null, null);
+    public static StorefrontException unavailable(@NonNull String message, @Nullable String installer) {
+        return new StorefrontException(CODE_UNAVAILABLE, message, null, null, installer);
     }
 
     @NonNull
-    public static StorefrontException unavailable(@NonNull String message, @NonNull BillingResult result) {
+    public static StorefrontException unavailable(@NonNull String message, @NonNull BillingResult result, @Nullable String installer) {
         String debug = result.getDebugMessage();
         String detail = message + " (Play Billing response code " + result.getResponseCode() + (debug.isEmpty() ? "" : ": " + debug) + ")";
-        return new StorefrontException(CODE_UNAVAILABLE, detail, result.getResponseCode(), debug.isEmpty() ? null : debug);
+        return new StorefrontException(CODE_UNAVAILABLE, detail, result.getResponseCode(), debug.isEmpty() ? null : debug, installer);
     }
 
     @NonNull
-    public static StorefrontException timeout(long timeoutMs) {
-        return new StorefrontException(CODE_TIMEOUT, "Google Play did not report a storefront within " + timeoutMs + " ms.", null, null);
+    public static StorefrontException timeout(long timeoutMs, @Nullable String installer) {
+        return new StorefrontException(
+            CODE_TIMEOUT,
+            "Google Play did not report a storefront within " + timeoutMs + " ms.",
+            null,
+            null,
+            installer
+        );
     }
 
     @NonNull
@@ -63,10 +77,16 @@ public final class StorefrontException extends Exception {
         return debugMessage;
     }
 
+    /** Package that installed the app (e.g. {@code com.android.vending}), or {@code null} when unknown. */
+    @Nullable
+    public String getInstaller() {
+        return installer;
+    }
+
     /** Extra data for the rejected call, or {@code null} when there is none. */
     @Nullable
     public JSObject toData() {
-        if (responseCode == null && debugMessage == null) {
+        if (responseCode == null && debugMessage == null && installer == null) {
             return null;
         }
         JSObject data = new JSObject();
@@ -75,6 +95,9 @@ public final class StorefrontException extends Exception {
         }
         if (debugMessage != null) {
             data.put("debugMessage", debugMessage);
+        }
+        if (installer != null) {
+            data.put("installer", installer);
         }
         return data;
     }

@@ -12,8 +12,18 @@ import StoreKitTest
 /// apply its configuration when tests are started with `xcodebuild` (Apple bug
 /// FB22237318); those tests then skip with a diagnostic instead of failing.
 /// `scripts/test-ios.sh` prefers an unaffected runtime (iOS 26.2 or older).
+///
+/// MarketplaceKit's `AppDistributor.current` never answers in a hostless test
+/// bundle on the simulator (see `AppDistributionTests`), so the tests that
+/// pin a storefront inject a distribution stand-in to stay fast. Only
+/// `testReadsTheStorefrontTheSimulatorReports` runs the reader's defaults.
 final class StoreKitStorefrontTests: XCTestCase {
     private static let overrideTimeout: TimeInterval = 5
+
+    /// The real StoreKit path with a fixed distribution.
+    private func storeKitReader() -> StorefrontReader {
+        StorefrontReader(fetch: StorefrontReader.fetchFromStoreKit, fetchDistribution: { .appStore })
+    }
 
     private var session: SKTestSession?
 
@@ -38,7 +48,7 @@ final class StoreKitStorefrontTests: XCTestCase {
     /// Runs on every simulator: whatever storefront StoreKit reports, the
     /// plugin has to read it and map it consistently.
     func testReadsTheStorefrontTheSimulatorReports() async throws {
-        let info = try await StorefrontReader().read(timeout: 5_000)
+        let info = try await StorefrontReader().read(timeout: 3_000)
         let current = await Storefront.current
         let expected = try XCTUnwrap(current, "the simulator reports no storefront at all")
 
@@ -46,7 +56,8 @@ final class StoreKitStorefrontTests: XCTestCase {
         XCTAssertEqual(info.id, expected.id)
         XCTAssertTrue(info.countryCode3.range(of: "^[A-Z]{3}$", options: .regularExpression) != nil, info.countryCode3)
         XCTAssertEqual(info.countryCode, CountryCodes.alpha2(fromAlpha3: info.countryCode3), "storefront \(info.countryCode3) is not in the country table")
-        XCTAssertEqual(info.dictionary["source"] as? String, "appStore")
+        print("Reader defaults report distribution \(info.distribution) on this simulator")
+        XCTAssertTrue(["appStore", "testFlight", "marketplace", "web", "other"].contains(info.distribution.source), info.distribution.source)
     }
 
     func testStorefrontCurrentFollowsTheTestSession() async throws {
@@ -60,7 +71,7 @@ final class StoreKitStorefrontTests: XCTestCase {
     func testReadsGermanStorefront() async throws {
         try await select(storefront: "DEU")
 
-        let info = try await StorefrontReader().read()
+        let info = try await storeKitReader().read()
 
         XCTAssertEqual(info.countryCode3, "DEU")
         XCTAssertEqual(info.countryCode, "DE")
@@ -70,7 +81,7 @@ final class StoreKitStorefrontTests: XCTestCase {
     func testReadsUSStorefront() async throws {
         try await select(storefront: "USA")
 
-        let info = try await StorefrontReader().read()
+        let info = try await storeKitReader().read()
 
         XCTAssertEqual(info.countryCode3, "USA")
         XCTAssertEqual(info.countryCode, "US")
@@ -79,7 +90,7 @@ final class StoreKitStorefrontTests: XCTestCase {
     func testPluginResolvesStorefrontThroughStoreKit() async throws {
         try await select(storefront: "CHE")
 
-        let info = try await StorefrontReader(fetch: StorefrontReader.fetchFromStoreKit).read(timeout: 5_000)
+        let info = try await storeKitReader().read(timeout: 5_000)
 
         XCTAssertEqual(info.countryCode, "CH")
         XCTAssertEqual(info.countryCode3, "CHE")

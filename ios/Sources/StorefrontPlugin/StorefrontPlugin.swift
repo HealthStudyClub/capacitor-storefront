@@ -21,9 +21,9 @@ public class StorefrontPlugin: CAPPlugin, CAPBridgedPlugin {
                 let info = try await reader.read(timeout: timeout)
                 call.resolve(info.dictionary)
             } catch let error as StorefrontError {
-                call.reject(error.message, error.code, error)
+                call.reject(error.message, error.code, error, error.data)
             } catch {
-                call.reject(error.localizedDescription, StorefrontError.unavailable.code, error)
+                call.reject(error.localizedDescription, StorefrontError.unavailable(distribution: nil).code, error)
             }
         }
     }

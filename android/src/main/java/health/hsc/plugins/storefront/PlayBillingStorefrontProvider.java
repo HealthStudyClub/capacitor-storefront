@@ -21,6 +21,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *
  * <p>This needs the Google Play Store and a signed in Google account on the device. Emulators
  * without Google Play fail with {@link StorefrontException#CODE_UNAVAILABLE}.
+ *
+ * <p>Google Play answers regardless of where the app itself was installed from, so every result
+ * and error also carries the package that installed the app (see {@link InstallSource}).
  */
 public final class PlayBillingStorefrontProvider implements StorefrontProvider {
 
@@ -46,12 +49,17 @@ public final class PlayBillingStorefrontProvider implements StorefrontProvider {
         private final Callback callback;
         private final AtomicBoolean settled = new AtomicBoolean(false);
         private final Runnable onTimeout;
+
+        @Nullable
+        private final String installer;
+
         private volatile BillingClient client;
 
         Lookup(long timeoutMs, Callback callback) {
             this.timeoutMs = timeoutMs;
             this.callback = callback;
-            this.onTimeout = () -> fail(StorefrontException.timeout(timeoutMs));
+            this.installer = InstallSource.installer(context);
+            this.onTimeout = () -> fail(StorefrontException.timeout(timeoutMs, installer));
         }
 
         void start() {
@@ -65,7 +73,7 @@ public final class PlayBillingStorefrontProvider implements StorefrontProvider {
                 client.startConnection(this);
             } catch (RuntimeException e) {
                 Logger.error(TAG, "Could not connect to Google Play Billing", e);
-                fail(StorefrontException.unavailable("Could not connect to Google Play Billing: " + e.getMessage()));
+                fail(StorefrontException.unavailable("Could not connect to Google Play Billing: " + e.getMessage(), installer));
             }
         }
 
@@ -76,33 +84,33 @@ public final class PlayBillingStorefrontProvider implements StorefrontProvider {
                 return; // already settled (e.g. timed out) and closed
             }
             if (result.getResponseCode() != BillingClient.BillingResponseCode.OK) {
-                fail(StorefrontException.unavailable("Google Play Billing is not available", result));
+                fail(StorefrontException.unavailable("Google Play Billing is not available", result, installer));
                 return;
             }
             try {
                 connected.getBillingConfigAsync(GetBillingConfigParams.newBuilder().build(), this::onBillingConfig);
             } catch (RuntimeException e) {
                 Logger.error(TAG, "getBillingConfigAsync failed", e);
-                fail(StorefrontException.unavailable("Google Play Billing could not be queried: " + e.getMessage()));
+                fail(StorefrontException.unavailable("Google Play Billing could not be queried: " + e.getMessage(), installer));
             }
         }
 
         private void onBillingConfig(@NonNull BillingResult result, @Nullable BillingConfig config) {
             if (result.getResponseCode() != BillingClient.BillingResponseCode.OK) {
-                fail(StorefrontException.unavailable("Google Play did not report a storefront", result));
+                fail(StorefrontException.unavailable("Google Play did not report a storefront", result, installer));
                 return;
             }
             String countryCode = config == null ? null : config.getCountryCode();
             if (countryCode == null || countryCode.trim().isEmpty()) {
-                fail(StorefrontException.unavailable("Google Play reported an empty storefront country code"));
+                fail(StorefrontException.unavailable("Google Play reported an empty storefront country code", installer));
                 return;
             }
-            succeed(StorefrontInfo.fromPlayCountryCode(countryCode));
+            succeed(StorefrontInfo.fromPlayCountryCode(countryCode, installer));
         }
 
         @Override
         public void onBillingServiceDisconnected() {
-            fail(StorefrontException.unavailable("Google Play Billing service disconnected before it reported a storefront"));
+            fail(StorefrontException.unavailable("Google Play Billing service disconnected before it reported a storefront", installer));
         }
 
         private void succeed(StorefrontInfo info) {

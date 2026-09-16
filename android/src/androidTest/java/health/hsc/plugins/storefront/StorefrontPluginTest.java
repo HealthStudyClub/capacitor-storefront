@@ -18,11 +18,12 @@ import org.junit.runner.RunWith;
 public class StorefrontPluginTest {
 
     private static final long WAIT_MS = 2_000;
+    private static final String PLAY_STORE = "com.android.vending";
 
     @Test
     public void resolvesWithTheProvidersStorefront() throws Exception {
         StorefrontPlugin plugin = new StorefrontPlugin();
-        plugin.setStorefrontProvider((timeoutMs, callback) -> callback.onSuccess(StorefrontInfo.fromPlayCountryCode("de")));
+        plugin.setStorefrontProvider((timeoutMs, callback) -> callback.onSuccess(StorefrontInfo.fromPlayCountryCode("de", PLAY_STORE)));
         RecordingPluginCall call = new RecordingPluginCall(new JSObject());
 
         plugin.getStorefront(call);
@@ -34,12 +35,19 @@ public class StorefrontPluginTest {
         assertEquals("DE", call.resolvedData.getString("countryCode"));
         assertEquals("DEU", call.resolvedData.getString("countryCode3"));
         assertEquals("playBilling", call.resolvedData.getString("source"));
+        assertEquals(PLAY_STORE, call.resolvedData.getString("installer"));
         assertEquals(1, call.settleCount());
     }
 
     @Test
     public void rejectsWithTheProvidersError() throws Exception {
-        StorefrontException error = new StorefrontException(StorefrontException.CODE_UNAVAILABLE, "no play", 3, "BILLING_UNAVAILABLE");
+        StorefrontException error = new StorefrontException(
+            StorefrontException.CODE_UNAVAILABLE,
+            "no play",
+            3,
+            "BILLING_UNAVAILABLE",
+            PLAY_STORE
+        );
         StorefrontPlugin plugin = new StorefrontPlugin();
         plugin.setStorefrontProvider((timeoutMs, callback) -> callback.onError(error));
         RecordingPluginCall call = new RecordingPluginCall(new JSObject());
@@ -55,12 +63,13 @@ public class StorefrontPluginTest {
         assertNotNull(call.rejectData);
         assertEquals(3, call.rejectData.getInteger("responseCode").intValue());
         assertEquals("BILLING_UNAVAILABLE", call.rejectData.getString("debugMessage"));
+        assertEquals(PLAY_STORE, call.rejectData.getString("installer"));
     }
 
     @Test
     public void rejectsTimeoutWithoutData() throws Exception {
         StorefrontPlugin plugin = new StorefrontPlugin();
-        plugin.setStorefrontProvider((timeoutMs, callback) -> callback.onError(StorefrontException.timeout(timeoutMs)));
+        plugin.setStorefrontProvider((timeoutMs, callback) -> callback.onError(StorefrontException.timeout(timeoutMs, null)));
         RecordingPluginCall call = new RecordingPluginCall(new JSObject());
 
         plugin.getStorefront(call);
@@ -71,12 +80,27 @@ public class StorefrontPluginTest {
     }
 
     @Test
+    public void rejectsTimeoutWithTheInstallerAsData() throws Exception {
+        StorefrontPlugin plugin = new StorefrontPlugin();
+        plugin.setStorefrontProvider((timeoutMs, callback) -> callback.onError(StorefrontException.timeout(timeoutMs, PLAY_STORE)));
+        RecordingPluginCall call = new RecordingPluginCall(new JSObject());
+
+        plugin.getStorefront(call);
+
+        assertTrue("call did not settle", call.awaitSettled(WAIT_MS));
+        assertEquals("TIMEOUT", call.rejectCode);
+        assertNotNull(call.rejectData);
+        assertEquals(PLAY_STORE, call.rejectData.getString("installer"));
+        assertEquals(1, call.rejectData.length());
+    }
+
+    @Test
     public void passesTimeoutOptionToTheProvider() throws Exception {
         AtomicLong seenTimeout = new AtomicLong(-1);
         StorefrontPlugin plugin = new StorefrontPlugin();
         plugin.setStorefrontProvider((timeoutMs, callback) -> {
             seenTimeout.set(timeoutMs);
-            callback.onSuccess(StorefrontInfo.fromPlayCountryCode("US"));
+            callback.onSuccess(StorefrontInfo.fromPlayCountryCode("US", null));
         });
         JSObject options = new JSObject();
         options.put("timeout", 1234);
